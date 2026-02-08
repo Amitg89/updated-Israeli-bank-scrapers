@@ -19,8 +19,7 @@
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "inlineSourceMap": true,
-    "inlineSources": true
+    "inlineSourceMap": true
   },
   "include": ["src/**/*",".eslintrc.js","jest.config.js"],
   "exclude": ["node_modules"]
