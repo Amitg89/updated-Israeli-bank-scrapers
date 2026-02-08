@@ -60,6 +60,14 @@ export function runSerial<T>(actions: (() => Promise<T>)[]): Promise<T[]> {
   return actions.reduce((m, a) => m.then(async x => [...x, await a()]), Promise.resolve<T[]>(new Array<T>()));
 }
 
-export function sleep(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+export function sleep(ms: number): Promise<void> {
+  return new Promise<void>(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Random delay within [min, max] ms to mimic human-like timing and reduce bot detection.
+ */
+export function randomDelay(minMs: number, maxMs: number): Promise<void> {
+  const delay = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+  return sleep(delay);
 }

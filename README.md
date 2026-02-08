@@ -1,5 +1,7 @@
 # Israeli Bank Scrapers - Get closer to your own data!
 
+> **This is a fork** of [eshaham/israeli-bank-scrapers](https://github.com/eshaham/israeli-bank-scrapers) with fixes for Isracard (and Amex) login after site/UI and anti-bot changes. See **[FORK.md](FORK.md)** for what changed, attribution, and how to use this fork.
+
 <img src="./logo.png" width="100" height="100" alt="Logo" align="left" />
 
 [![NPM](https://nodei.co/npm/israeli-bank-scrapers.png)](https://nodei.co/npm/israeli-bank-scrapers/)

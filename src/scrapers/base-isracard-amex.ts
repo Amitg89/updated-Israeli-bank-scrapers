@@ -3,11 +3,12 @@ import moment, { type Moment } from 'moment';
 import { type Page } from 'puppeteer';
 import { ALT_SHEKEL_CURRENCY, SHEKEL_CURRENCY, SHEKEL_CURRENCY_KEYWORD } from '../constants';
 import { ScraperProgressTypes } from '../definitions';
+import { clickButton, waitUntilElementFound } from '../helpers/elements-interactions';
 import getAllMonthMoments from '../helpers/dates';
 import { getDebug } from '../helpers/debug';
 import { fetchGetWithinPage, fetchPostWithinPage } from '../helpers/fetch';
 import { filterOldTransactions, fixInstallments, getRawTransaction } from '../helpers/transactions';
-import { runSerial, sleep } from '../helpers/waiting';
+import { randomDelay, runSerial, sleep } from '../helpers/waiting';
 import {
   TransactionStatuses,
   TransactionTypes,
@@ -21,9 +22,12 @@ import { type ScraperOptions, type ScraperScrapingResult } from './interface';
 import { interceptionPriorities, maskHeadlessUserAgent } from '../helpers/browser';
 
 const RATE_LIMIT = {
-  SLEEP_BETWEEN: 1000,
+  SLEEP_BETWEEN: 2500, // Delay to avoid bot detection (randomized up to 3s)
   TRANSACTIONS_BATCH_SIZE: 10,
 } as const;
+
+/** Initial delay after loading login page so the site does not treat us as a bot */
+const LOGIN_PAGE_SETTLE_MS = 2000;
 
 const COUNTRY_CODE = '212';
 const ID_TYPE = '1';
@@ -120,7 +124,8 @@ function getAccountsUrl(servicesUrl: string, monthMoment: Moment) {
 
 async function fetchAccounts(page: Page, servicesUrl: string, monthMoment: Moment): Promise<ScrapedAccount[]> {
   const dataUrl = getAccountsUrl(servicesUrl, monthMoment);
-  debug(`fetching accounts from ${dataUrl}`);
+  debug(`fetching accounts for ${monthMoment.format('YYYY-MM')} from ${dataUrl}`);
+  await randomDelay(RATE_LIMIT.SLEEP_BETWEEN, RATE_LIMIT.SLEEP_BETWEEN + 500);
   const dataResult = await fetchGetWithinPage<ScrapedAccountsWithinPageResponse>(page, dataUrl);
   if (dataResult && _.get(dataResult, 'Header.Status') === '1' && dataResult.DashboardMonthBean) {
     const { cardsCharges } = dataResult.DashboardMonthBean;
@@ -225,8 +230,8 @@ async function fetchTransactions(
 ): Promise<ScrapedAccountsWithIndex> {
   const accounts = await fetchAccounts(page, companyServiceOptions.servicesUrl, monthMoment);
   const dataUrl = getTransactionsUrl(companyServiceOptions.servicesUrl, monthMoment);
-  await sleep(RATE_LIMIT.SLEEP_BETWEEN);
-  debug(`fetching transactions from ${dataUrl} for month ${monthMoment.format('YYYY-MM')}`);
+  debug(`fetching transactions for ${monthMoment.format('YYYY-MM')} from ${dataUrl}`);
+  await randomDelay(RATE_LIMIT.SLEEP_BETWEEN, RATE_LIMIT.SLEEP_BETWEEN + 500);
   const dataResult = await fetchGetWithinPage<ScrapedTransactionData>(page, dataUrl);
   if (dataResult && _.get(dataResult, 'Header.Status') === '1' && dataResult.CardsTransactionsListBean) {
     const accountTxns: ScrapedAccountsWithIndex = {};
@@ -418,6 +423,17 @@ class IsracardAmexBaseScraper extends BaseScraperWithBrowser<ScraperSpecificCred
 
     this.emitProgress(ScraperProgressTypes.LoggingIn);
 
+    // Let the login page settle to reduce bot detection (PR #1027)
+    await sleep(LOGIN_PAGE_SETTLE_MS);
+
+    // Switch from default SMS login to "Enter with password" (PR #1004 – UI change)
+    await waitUntilElementFound(this.page, '#flip', true);
+    debug('click on the "Enter with password" link');
+    await clickButton(this.page, '#flip');
+    debug('wait for password panel to be visible');
+    await waitUntilElementFound(this.page, '#otpLoginPwd', true);
+    await sleep(800); // allow panel flip animation to finish
+
     const validateUrl = `${this.servicesUrl}?reqName=ValidateIdData`;
     const validateRequest = {
       id: credentials.id,
@@ -428,14 +444,36 @@ class IsracardAmexBaseScraper extends BaseScraperWithBrowser<ScraperSpecificCred
       companyCode: this.companyCode,
     };
     debug('logging in with validate request');
-    const validateResult = await fetchPostWithinPage<ScrapedLoginValidation>(this.page, validateUrl, validateRequest);
-    if (
-      !validateResult ||
-      !validateResult.Header ||
-      validateResult.Header.Status !== '1' ||
-      !validateResult.ValidateIdDataBean
-    ) {
-      throw new Error('unknown error during login');
+    let validateResult: ScrapedLoginValidation | null;
+    try {
+      validateResult = await fetchPostWithinPage<ScrapedLoginValidation>(this.page, validateUrl, validateRequest);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/automation detected|bot detection|blocked by server/i.test(msg)) {
+        throw e;
+      }
+      // Parse error, network, or other failure during validation → treat as invalid credentials
+      debug('validate request failed', msg);
+      this.emitProgress(ScraperProgressTypes.LoginFailed);
+      return {
+        success: false,
+        errorType: ScraperErrorTypes.InvalidPassword,
+      };
+    }
+    if (!validateResult) {
+      this.emitProgress(ScraperProgressTypes.LoginFailed);
+      return {
+        success: false,
+        errorType: ScraperErrorTypes.InvalidPassword,
+      };
+    }
+    if (!validateResult.Header?.Status || validateResult.Header.Status !== '1' || !validateResult.ValidateIdDataBean) {
+      // Invalid ID/card or other validation failure → treat as invalid credentials
+      this.emitProgress(ScraperProgressTypes.LoginFailed);
+      return {
+        success: false,
+        errorType: ScraperErrorTypes.InvalidPassword,
+      };
     }
 
     const validateReturnCode = validateResult.ValidateIdDataBean.returnCode;
@@ -453,7 +491,21 @@ class IsracardAmexBaseScraper extends BaseScraperWithBrowser<ScraperSpecificCred
         idType: ID_TYPE,
       };
       debug('user login started');
-      const loginResult = await fetchPostWithinPage<{ status: string }>(this.page, loginUrl, request);
+      let loginResult: { status: string } | null;
+      try {
+        loginResult = await fetchPostWithinPage<{ status: string }>(this.page, loginUrl, request);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (/automation detected|bot detection|blocked by server/i.test(msg)) {
+          throw e;
+        }
+        debug('performLogonI request failed', msg);
+        this.emitProgress(ScraperProgressTypes.LoginFailed);
+        return {
+          success: false,
+          errorType: ScraperErrorTypes.InvalidPassword,
+        };
+      }
       debug(`user login with status '${loginResult?.status}'`, loginResult);
 
       if (loginResult && loginResult.status === '1') {
