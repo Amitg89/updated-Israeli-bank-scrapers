@@ -419,7 +419,8 @@ class IsracardAmexBaseScraper extends BaseScraperWithBrowser<ScraperSpecificCred
 
     await maskHeadlessUserAgent(this.page);
 
-    await this.navigateTo(`${this.baseUrl}/personalarea/Login`);
+    // Use domcontentloaded so we don't wait for all images/scripts (avoids 30s timeout in Docker/HA)
+    await this.navigateTo(`${this.baseUrl}/personalarea/Login`, 'domcontentloaded');
 
     this.emitProgress(ScraperProgressTypes.LoggingIn);
 

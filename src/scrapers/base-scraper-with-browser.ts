@@ -116,9 +116,12 @@ class BaseScraperWithBrowser<TCredentials extends ScraperCredentials> extends Ba
 
     this.cleanups.push(() => page.close());
 
-    if (this.options.defaultTimeout) {
-      this.page.setDefaultTimeout(this.options.defaultTimeout);
-    }
+    // Apply timeout to navigation (page.goto) and to waitForSelector etc. Default 60s for Docker/HA.
+    const DEFAULT_NAV_TIMEOUT_MS = 60000;
+    const navTimeout = this.options.timeout ?? DEFAULT_NAV_TIMEOUT_MS;
+    this.page.setDefaultNavigationTimeout(navTimeout);
+    const actionTimeout = this.options.defaultTimeout ?? this.options.timeout ?? DEFAULT_NAV_TIMEOUT_MS;
+    this.page.setDefaultTimeout(actionTimeout);
 
     if (this.options.preparePage) {
       debug("execute 'preparePage' interceptor provided in options");
