@@ -1,5 +1,6 @@
 import moment from 'moment';
 import { type Page } from 'puppeteer';
+import { maskHeadlessUserAgent } from '../helpers/browser';
 import { waitUntilElementFound } from '../helpers/elements-interactions';
 import { fetchGetWithinPage } from '../helpers/fetch';
 import { waitForNavigation } from '../helpers/navigation';
@@ -133,11 +134,32 @@ async function fetchAccountData(page: Page, options: ScraperOptions): Promise<Sc
   return accountData;
 }
 
-async function navigateOrErrorLabel(page: Page) {
+// Timeout for the post-login SPA to route away from its loader screen.
+const POST_LOGIN_TIMEOUT_MS = 60_000;
+
+/**
+ * After submitting the login form the site shows an SPA loader for a while
+ * before hash-routing to MY_ACCOUNT_HOMEPAGE. A plain waitForNavigation can
+ * resolve (or time out) while the loader is still up, so poll until the URL
+ * reaches a known post-login state or an inline error label appears; on
+ * timeout we fall through and let the URL check classify the result.
+ */
+async function waitForPostLoginOutcome(page: Page, timeout = POST_LOGIN_TIMEOUT_MS) {
   try {
     await waitForNavigation(page);
   } catch (e) {
-    await waitUntilElementFound(page, '#general-error', false, 100);
+    // Hash-routing SPAs don't always emit a navigation event; ignore.
+  }
+  try {
+    await page.waitForFunction(
+      () =>
+        window.location.href.includes('MY_ACCOUNT_HOMEPAGE') ||
+        window.location.hash.includes('PWD_RENEW') ||
+        !!document.querySelector('#general-error'),
+      { timeout, polling: 250 },
+    );
+  } catch (e) {
+    // Still on the loader/login page — the login-status URL check decides.
   }
 }
 
@@ -170,9 +192,15 @@ class DiscountScraper extends BaseScraperWithBrowser<ScraperSpecificCredentials>
     return {
       loginUrl: `${BASE_URL}/login/#/LOGIN_PAGE`,
       checkReadiness: async () => waitUntilElementFound(this.page, '#tzId'),
+      // The site's bot detection stalls the post-login SPA loader forever for
+      // a HeadlessChrome user agent — mask it before submitting.
+      preAction: async () => {
+        await maskHeadlessUserAgent(this.page);
+      },
       fields: createLoginFields(credentials),
       submitButtonSelector: '.sendBtn',
-      postAction: async () => navigateOrErrorLabel(this.page),
+      postAction: async () =>
+        waitForPostLoginOutcome(this.page, 'timeout' in this.options ? this.options.timeout : undefined),
       possibleResults: getPossibleLoginResults(),
     };
   }
