@@ -1,6 +1,6 @@
 import moment from 'moment';
 import { type Page } from 'puppeteer';
-import { maskHeadlessUserAgent } from '../helpers/browser';
+import { applyStealth, maskHeadlessUserAgent } from '../helpers/browser';
 import { waitUntilElementFound } from '../helpers/elements-interactions';
 import { fetchGetWithinPage } from '../helpers/fetch';
 import { waitForNavigation } from '../helpers/navigation';
@@ -197,6 +197,8 @@ class DiscountScraper extends BaseScraperWithBrowser<ScraperSpecificCredentials>
       // Present a full Windows-Chrome identity: UA string, client hints
       // (Sec-CH-UA-Platform betrays the real OS otherwise) and Hebrew locale.
       preAction: async () => {
+        // Hide headless/Linux JS fingerprints (applies to the post-login SPA too).
+        await applyStealth(this.page);
         await maskHeadlessUserAgent(this.page);
         const userAgent = await this.page.evaluate(() => navigator.userAgent);
         const chromeMajor = (/Chrome\/(\d+)/.exec(userAgent) || [])[1] || '140';
