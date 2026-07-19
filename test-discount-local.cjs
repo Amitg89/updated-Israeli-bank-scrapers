@@ -58,12 +58,18 @@ async function main() {
   const password = await prompt('Password (hidden): ', true);
   const num = await prompt('Identification code (קוד מזהה): ');
 
+  // Use the system Chrome: the puppeteer-downloaded Chrome-for-Testing
+  // extracts broken on this machine (missing Frameworks dir).
+  const executablePath =
+    process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+
   const scraper = createScraper({
     companyId: CompanyTypes.discount,
     startDate: new Date(Date.now() - 30 * 24 * 3600 * 1000),
     showBrowser: show,
     verbose: true,
     timeout: 60000,
+    executablePath,
     storeFailureScreenShotPath: `${__dirname}/discount-local-fail.png`,
     args: [
       '--disable-dev-shm-usage',
