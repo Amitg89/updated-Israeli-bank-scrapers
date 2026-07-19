@@ -1,5 +1,7 @@
+import fs from 'fs';
+import path from 'path';
 import moment from 'moment';
-import { type Page } from 'puppeteer';
+import { type ConsoleMessage, type HTTPRequest, type HTTPResponse, type Page } from 'puppeteer';
 import { applyStealth, maskHeadlessUserAgent } from '../helpers/browser';
 import { waitUntilElementFound } from '../helpers/elements-interactions';
 import { fetchGetWithinPage } from '../helpers/fetch';
@@ -138,28 +140,102 @@ async function fetchAccountData(page: Page, options: ScraperOptions): Promise<Sc
 const POST_LOGIN_TIMEOUT_MS = 60_000;
 
 /**
+ * Optional debug capture: a "filmstrip" of screenshots through the post-login
+ * wait plus console/pageerror/network logs, so we can see WHY the SPA hangs
+ * (e.g. a blocked API response or a JS error) instead of only a final
+ * spinner screenshot. Enabled automatically when storeFailureScreenShotPath
+ * is set; artifacts land in that file's directory. Never affects normal runs.
+ */
+interface DiagCapture {
+  lines: string[];
+  dir: string;
+  snapshot: (label: string) => Promise<void>;
+  dump: () => void;
+}
+
+function debugDirFrom(options: unknown): string | undefined {
+  const p = (options as { storeFailureScreenShotPath?: string })?.storeFailureScreenShotPath;
+  return p ? path.dirname(p) : undefined;
+}
+
+function createDiagCapture(page: Page, dir: string): DiagCapture {
+  const lines: string[] = [];
+  const at = () => new Date().toISOString();
+
+  page.on('console', (msg: ConsoleMessage) => lines.push(`[${at()}] console:${msg.type()} ${msg.text()}`));
+  page.on('pageerror', (err: unknown) => lines.push(`[${at()}] pageerror ${(err as Error)?.message ?? String(err)}`));
+  page.on('requestfailed', (req: HTTPRequest) =>
+    lines.push(`[${at()}] requestfailed ${req.url()} :: ${req.failure()?.errorText ?? ''}`),
+  );
+  page.on('response', (res: HTTPResponse) => {
+    const url = res.url();
+    if (url.includes('telebank') || url.includes('gatewayAPI') || url.includes('Titan')) {
+      lines.push(`[${at()}] response ${res.status()} ${url}`);
+    }
+  });
+
+  return {
+    lines,
+    dir,
+    async snapshot(label: string) {
+      try {
+        await page.screenshot({ path: path.join(dir, `discount-${label}.png`), fullPage: true });
+      } catch (e) {
+        // Screenshots can fail mid-navigation; ignore.
+      }
+    },
+    dump() {
+      try {
+        fs.writeFileSync(path.join(dir, 'discount-debug.log'), lines.join('\n'), 'utf8');
+      } catch (e) {
+        // Best-effort.
+      }
+    },
+  };
+}
+
+/**
  * After submitting the login form the site shows an SPA loader for a while
  * before hash-routing to MY_ACCOUNT_HOMEPAGE. A plain waitForNavigation can
  * resolve (or time out) while the loader is still up, so poll until the URL
  * reaches a known post-login state or an inline error label appears; on
  * timeout we fall through and let the URL check classify the result.
  */
-async function waitForPostLoginOutcome(page: Page, timeout = POST_LOGIN_TIMEOUT_MS) {
+async function waitForPostLoginOutcome(page: Page, timeout = POST_LOGIN_TIMEOUT_MS, diag?: DiagCapture) {
   try {
     await waitForNavigation(page);
   } catch (e) {
     // Hash-routing SPAs don't always emit a navigation event; ignore.
   }
-  try {
-    await page.waitForFunction(
-      () =>
-        window.location.href.includes('MY_ACCOUNT_HOMEPAGE') ||
-        window.location.hash.includes('PWD_RENEW') ||
-        !!document.querySelector('#general-error'),
-      { timeout, polling: 250 },
-    );
-  } catch (e) {
-    // Still on the loader/login page — the login-status URL check decides.
+
+  const deadline = Date.now() + timeout;
+  const pollMs = diag ? 1500 : 250;
+  let frame = 0;
+  while (Date.now() < deadline) {
+    const done = await page
+      .evaluate(
+        () =>
+          window.location.href.includes('MY_ACCOUNT_HOMEPAGE') ||
+          window.location.hash.includes('PWD_RENEW') ||
+          !!document.querySelector('#general-error'),
+      )
+      .catch(() => false);
+    if (diag && frame < 30) {
+      diag.lines.push(`[${new Date().toISOString()}] url ${page.url()}`);
+      // eslint-disable-next-line no-await-in-loop
+      await diag.snapshot(`frame-${String(frame).padStart(3, '0')}`);
+      frame += 1;
+    }
+    if (done) break;
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise(resolve => {
+      setTimeout(resolve, pollMs);
+    });
+  }
+
+  if (diag) {
+    diag.lines.push(`[${new Date().toISOString()}] final url ${page.url()}`);
+    diag.dump();
   }
 }
 
@@ -188,6 +264,8 @@ function createLoginFields(credentials: ScraperSpecificCredentials) {
 type ScraperSpecificCredentials = { id: string; password: string; num: string };
 
 class DiscountScraper extends BaseScraperWithBrowser<ScraperSpecificCredentials> {
+  private diag?: DiagCapture;
+
   getLoginOptions(credentials: ScraperSpecificCredentials) {
     return {
       loginUrl: `${BASE_URL}/login/#/LOGIN_PAGE`,
@@ -197,6 +275,13 @@ class DiscountScraper extends BaseScraperWithBrowser<ScraperSpecificCredentials>
       // Present a full Windows-Chrome identity: UA string, client hints
       // (Sec-CH-UA-Platform betrays the real OS otherwise) and Hebrew locale.
       preAction: async () => {
+        // Optional debug capture (filmstrip + console/network log) when a
+        // failure-screenshot path is configured.
+        const debugDir = debugDirFrom(this.options);
+        if (debugDir) {
+          this.diag = createDiagCapture(this.page, debugDir);
+          await this.diag.snapshot('login-page');
+        }
         // Hide headless/Linux JS fingerprints (applies to the post-login SPA too).
         await applyStealth(this.page);
         await maskHeadlessUserAgent(this.page);
@@ -225,7 +310,7 @@ class DiscountScraper extends BaseScraperWithBrowser<ScraperSpecificCredentials>
       fields: createLoginFields(credentials),
       submitButtonSelector: '.sendBtn',
       postAction: async () =>
-        waitForPostLoginOutcome(this.page, 'timeout' in this.options ? this.options.timeout : undefined),
+        waitForPostLoginOutcome(this.page, 'timeout' in this.options ? this.options.timeout : undefined, this.diag),
       possibleResults: getPossibleLoginResults(),
     };
   }
