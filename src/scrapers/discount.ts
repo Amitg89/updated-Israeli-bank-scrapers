@@ -193,9 +193,32 @@ class DiscountScraper extends BaseScraperWithBrowser<ScraperSpecificCredentials>
       loginUrl: `${BASE_URL}/login/#/LOGIN_PAGE`,
       checkReadiness: async () => waitUntilElementFound(this.page, '#tzId'),
       // The site's bot detection stalls the post-login SPA loader forever for
-      // a HeadlessChrome user agent — mask it before submitting.
+      // headless/Linux browser fingerprints (the addon runs Alpine Chromium).
+      // Present a full Windows-Chrome identity: UA string, client hints
+      // (Sec-CH-UA-Platform betrays the real OS otherwise) and Hebrew locale.
       preAction: async () => {
         await maskHeadlessUserAgent(this.page);
+        const userAgent = await this.page.evaluate(() => navigator.userAgent);
+        const chromeMajor = (/Chrome\/(\d+)/.exec(userAgent) || [])[1] || '140';
+        const windowsUserAgent = userAgent
+          .replace(/\([^)]*\)/, '(Windows NT 10.0; Win64; x64)')
+          .replace('HeadlessChrome/', 'Chrome/');
+        await this.page.setUserAgent(windowsUserAgent, {
+          brands: [
+            { brand: 'Chromium', version: chromeMajor },
+            { brand: 'Google Chrome', version: chromeMajor },
+            { brand: 'Not_A Brand', version: '24' },
+          ],
+          fullVersion: `${chromeMajor}.0.0.0`,
+          platform: 'Windows',
+          platformVersion: '10.0.0',
+          architecture: 'x86',
+          model: '',
+          mobile: false,
+        });
+        await this.page.setExtraHTTPHeaders({
+          'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
+        });
       },
       fields: createLoginFields(credentials),
       submitButtonSelector: '.sendBtn',
