@@ -1,4 +1,4 @@
-import type { Falsy } from 'utility-types';
+type Falsy = false | '' | 0 | null | undefined;
 
 export class TimeoutError extends Error {}
 
@@ -67,7 +67,7 @@ export function sleep(ms: number): Promise<void> {
 /**
  * Random delay within [min, max] ms to mimic human-like timing and reduce bot detection.
  */
-export function randomDelay(minMs: number, maxMs: number): Promise<void> {
-  const delay = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+export function randomDelay(min: number = 500, max: number = 2000): Promise<void> {
+  const delay = Math.floor(Math.random() * (max - min + 1)) + min;
   return sleep(delay);
 }

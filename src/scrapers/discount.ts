@@ -1,4 +1,3 @@
-import _ from 'lodash';
 import moment from 'moment';
 import { type Page } from 'puppeteer';
 import { waitUntilElementFound } from '../helpers/elements-interactions';
@@ -41,7 +40,7 @@ interface ScrapedTransactionData {
   CurrentAccountLastTransactions?: {
     OperationEntry: ScrapedTransaction[];
     CurrentAccountInfo: CurrentAccountInfo;
-    FutureTransactionsBlock: {
+    FutureTransactionsBlock?: {
       FutureTransactionEntry: ScrapedTransaction[];
     };
   };
@@ -115,10 +114,8 @@ async function fetchAccountData(page: Page, options: ScraperOptions): Promise<Sc
       TransactionStatuses.Completed,
       options,
     );
-    const rawFutureTxns = _.get(
-      txnsResult,
-      'CurrentAccountLastTransactions.FutureTransactionsBlock.FutureTransactionEntry',
-    ) as ScrapedTransaction[];
+    const rawFutureTxns =
+      txnsResult.CurrentAccountLastTransactions.FutureTransactionsBlock?.FutureTransactionEntry ?? [];
     const accountPendingTxns = convertTransactions(rawFutureTxns, TransactionStatuses.Pending, options);
 
     accountsData.push({
@@ -150,6 +147,8 @@ function getPossibleLoginResults(): PossibleLoginResults {
     `${BASE_URL}/apollo/retail/#/MY_ACCOUNT_HOMEPAGE`,
     `${BASE_URL}/apollo/retail2/#/MY_ACCOUNT_HOMEPAGE`,
     `${BASE_URL}/apollo/retail2/`,
+    `${BASE_URL}/apollo/retail3/#/MY_ACCOUNT_HOMEPAGE`,
+    `${BASE_URL}/apollo/retail3/`,
   ];
   urls[LoginResults.InvalidPassword] = [`${BASE_URL}/apollo/core/templates/lobby/masterPage.html#/LOGIN_PAGE`];
   urls[LoginResults.ChangePassword] = [`${BASE_URL}/apollo/core/templates/lobby/masterPage.html#/PWD_RENEW`];

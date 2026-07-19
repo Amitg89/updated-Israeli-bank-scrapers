@@ -20,7 +20,6 @@ export const LoginResults = {
   ...LoginBaseResults,
 };
 
-// eslint-disable-next-line @typescript-eslint/no-redeclare
 export type LoginResults =
   | Exclude<ScraperErrorTypes, ScraperErrorTypes.Timeout | ScraperErrorTypes.Generic | ScraperErrorTypes.General>
   | LoginBaseResults;
@@ -118,9 +117,10 @@ class BaseScraperWithBrowser<TCredentials extends ScraperCredentials> extends Ba
 
     // Apply timeout to navigation (page.goto) and to waitForSelector etc. Default 60s for Docker/HA.
     const DEFAULT_NAV_TIMEOUT_MS = 60000;
-    const navTimeout = this.options.timeout ?? DEFAULT_NAV_TIMEOUT_MS;
+    const launchTimeout = 'timeout' in this.options ? this.options.timeout : undefined;
+    const navTimeout = launchTimeout ?? DEFAULT_NAV_TIMEOUT_MS;
     this.page.setDefaultNavigationTimeout(navTimeout);
-    const actionTimeout = this.options.defaultTimeout ?? this.options.timeout ?? DEFAULT_NAV_TIMEOUT_MS;
+    const actionTimeout = this.options.defaultTimeout ?? launchTimeout ?? DEFAULT_NAV_TIMEOUT_MS;
     this.page.setDefaultTimeout(actionTimeout);
 
     if (this.options.preparePage) {
