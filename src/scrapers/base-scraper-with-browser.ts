@@ -164,7 +164,28 @@ class BaseScraperWithBrowser<TCredentials extends ScraperCredentials> extends Ba
       return browser.newPage();
     }
 
-    const { timeout, args, executablePath, showBrowser } = this.options;
+    const { timeout, args, executablePath, showBrowser, browserWSEndpoint } = this.options;
+
+    if (browserWSEndpoint) {
+      debug(`connecting to remote browser via WebSocket: ${browserWSEndpoint}`);
+      const browser = await puppeteer.connect({
+        browserWSEndpoint,
+        defaultViewport: { width: 1280, height: 1024 },
+      });
+
+      this.cleanups.push(async () => {
+        debug('closing the remote browser');
+        await browser.close();
+      });
+
+      if (this.options.prepareBrowser) {
+        debug("execute 'prepareBrowser' interceptor provided in options");
+        await this.options.prepareBrowser(browser);
+      }
+
+      debug('create a new browser page');
+      return browser.newPage();
+    }
 
     const headless = !showBrowser;
     debug(`launch a browser with headless mode = ${headless}`);

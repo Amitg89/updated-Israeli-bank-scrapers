@@ -89,6 +89,13 @@ interface DefaultBrowserOptions {
    * @param browser
    */
   prepareBrowser?: (browser: Browser) => Promise<void>;
+
+  /**
+   * Connect to a remote browser via WebSocket (e.g. Browserless) using puppeteer.connect
+   * instead of launching a local Chromium binary. Takes precedence over executablePath/args
+   * when set.
+   */
+  browserWSEndpoint?: string;
 }
 
 type ScraperBrowserOptions = ExternalBrowserOptions | ExternalBrowserContextOptions | DefaultBrowserOptions;
