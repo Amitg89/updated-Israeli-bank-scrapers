@@ -9,6 +9,9 @@
  *   npm run build:js   # after any src/ change
  *   node test-discount-local.cjs            # headless, like the addon
  *   node test-discount-local.cjs --show     # headful, watch the browser
+ *   BROWSER_WS_ENDPOINT=ws://... node test-discount-local.cjs
+ *                                           # connect to a remote browser
+ *                                           # (Browserless / Chrome debug port)
  *
  * Credentials are prompted interactively and never stored.
  * Artifacts on failure: ./discount-local-fail.png
@@ -63,13 +66,18 @@ async function main() {
   const executablePath =
     process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
+  const browserWSEndpoint = process.env.BROWSER_WS_ENDPOINT;
+  if (browserWSEndpoint) {
+    console.log(`connect mode: ${browserWSEndpoint.replace(/token=[^&]*/, 'token=***')}`);
+  }
+
   const scraper = createScraper({
     companyId: CompanyTypes.discount,
     startDate: new Date(Date.now() - 30 * 24 * 3600 * 1000),
     showBrowser: show,
     verbose: true,
     timeout: 60000,
-    executablePath,
+    ...(browserWSEndpoint ? { browserWSEndpoint } : { executablePath }),
     storeFailureScreenShotPath: `${__dirname}/discount-local-fail.png`,
     args: [
       '--disable-dev-shm-usage',
